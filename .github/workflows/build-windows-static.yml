@@ -1,0 +1,103 @@
+name: Build OpenCV Static (Windows Debug + Release)
+
+on:
+  push:
+    branches: [ windows-static-build ]
+  pull_request:
+    branches: [ windows-static-build ]
+  workflow_dispatch:
+
+permissions:
+  contents: write  # needed to create releases
+
+jobs:
+  build:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        build_type: [Release, Debug]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        shell: pwsh
+        run: choco install -y cmake ninja
+
+      - name: Configure OpenCV (${{ matrix.build_type }})
+        shell: pwsh
+        run: |
+          cmake -S . -B build-${{ matrix.build_type }} `
+            -G "Visual Studio 17 2022" `
+            -A x64 `
+            -D BUILD_SHARED_LIBS=OFF `
+            -D BUILD_TESTS=OFF `
+            -D BUILD_PERF_TESTS=OFF `
+            -D BUILD_EXAMPLES=OFF `
+            -D BUILD_DOCS=OFF `
+            -D BUILD_WITH_DEBUG_INFO=ON `
+            -D INSTALL_PDB=ON `
+            -D INSTALL_PDB_COMPONENT_EXCLUDE_FROM_ALL=OFF `
+            -D INSTALL_CREATE_DISTRIB=ON `
+            -D WITH_GSTREAMER=OFF `
+            -D WITH_GTK=OFF `
+            -D WITH_WIN32UI=OFF `
+            -D WITH_OPENCL=OFF `
+            -D WITH_DIRECTX=OFF `
+            -D WITH_DIRECTML=OFF `
+            -D WITH_TBB=OFF `
+            -D WITH_CUDA=OFF `
+            -D WITH_FFMPEG=OFF `
+            -D BUILD_opencv_world=OFF `
+            -D BUILD_opencv_python3=OFF `
+            -D BUILD_opencv_python2=OFF `
+            -D BUILD_opencv_java=OFF `
+            -D CMAKE_BUILD_TYPE=${{ matrix.build_type }} `
+            -D CMAKE_INSTALL_PREFIX=install/${{ matrix.build_type }}
+
+      - name: Build (${{ matrix.build_type }})
+        shell: pwsh
+        run: cmake --build build-${{ matrix.build_type }} --config ${{ matrix.build_type }} --parallel 4
+
+      - name: Install (${{ matrix.build_type }})
+        shell: pwsh
+        run: cmake --install build-${{ matrix.build_type }} --config ${{ matrix.build_type }}
+
+      - name: Upload per-config artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: opencv-${{ matrix.build_type }}-static
+          path: install/${{ matrix.build_type }}
+
+  package:
+    runs-on: windows-latest
+    needs: build
+    steps:
+      - name: Download Release artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: opencv-Release-static
+          path: install/Release
+
+      - name: Download Debug artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: opencv-Debug-static
+          path: install/Debug
+
+      - name: Bundle both Debug and Release
+        shell: pwsh
+        run: |
+          mkdir package
+          Copy-Item -Recurse install/Release package/Release
+          Copy-Item -Recurse install/Debug package/Debug
+          Compress-Archive -Path package -DestinationPath opencv-windows-static.zip
+
+      - name: Create GitHub Release and upload ZIP
+        uses: softprops/action-gh-release@v2
+        with:
+          files: opencv-windows-static.zip
+          tag_name: ${{ github.ref_name }}
+          name: "OpenCV Windows Static (${{ github.ref_name }})"
+          draft: false
+          prerelease: false
